@@ -1,8 +1,8 @@
-# Detecção de Mãos com Mediapipe
+# Hand Detection Mediapipe
 
-Este projeto implementa um sistema de detecção de mãos utilizando a biblioteca Mediapipe e OpenCV. Ele captura vídeo da webcam, detecta os pontos de referência da mão e visualiza os movimentos desenhando vetores e calculando os ângulos entre eles.
+This project implements a hand detection system using the Mediapipe library and OpenCV. It captures video from the webcam, detects hand landmarks, and visualizes the hand movements by drawing vectors and calculating angles between them.
 
-## Estrutura do Projeto
+## Project Structure
 
 ```
 src
@@ -16,29 +16,29 @@ requirements.txt
 README.md
 ```
 
-## Instalação
+## Installation
 
-Para configurar o projeto, certifique-se de ter o Python instalado em sua máquina. Em seguida, instale as dependências necessárias executando:
+To set up the project, ensure you have Python installed on your machine. Then, install the required dependencies by running:
 
 ```
 pip install -r requirements.txt
 ```
 
-## Uso
+## Usage
 
-Para executar a aplicação de detecção de mãos, rode o seguinte comando:
+To run the hand detection application, execute the following command:
 
 ```
 python src/main.py
 ```
 
-Isso abrirá uma janela exibindo o vídeo da webcam com os pontos de referência e vetores desenhados sobre a mão. Pressione a tecla `Esc` para encerrar a aplicação.
+This will open a window displaying the webcam feed with hand landmarks and vectors drawn on it. Press the `Esc` key to exit the application.
 
-## Dependências
+## Dependencies
 
-O projeto requer os seguintes pacotes Python:
+The project requires the following Python packages:
 
 - `mediapipe`
 - `opencv-python`
 
-Você pode instalar esses pacotes usando o arquivo `requirements.txt` fornecido.
+You can install these packages using the provided `requirements.txt` file.

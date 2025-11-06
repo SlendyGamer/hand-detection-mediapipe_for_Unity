@@ -10,7 +10,6 @@ class HandSelectionGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Hand-ROM")
-        self.root.resizable(False, False)
 
         # Variáveis para armazenar os dedos selecionados
         self.finger1 = None
