@@ -28,7 +28,7 @@ class HandDetection:
         # Detecta apenas uma mão.
         self.mp_drawing = mp.solutions.drawing_utils
         self.mp_hands = mp.solutions.hands.Hands(max_num_hands=1, min_detection_confidence=min_detection_confidence,
-                                                 min_tracking_confidence=min_tracking_confidence)
+                                                 min_tracking_confidence=min_tracking_confidence, model_complexity=1)
         self.cap = cv2.VideoCapture(0)
         self.calc_amplitude = CalculationAmplitudeClass()
         self.vector_drawer = VectorDrawer()
@@ -101,33 +101,9 @@ class HandDetection:
         return x_min, y_min, x_max - x_min, y_max - y_min
     # Desenha os pontos das mãos detectados
     def draw_landmarks(self, image, results, arquivo_csv):
-        height = image.shape[0]
-        width = image.shape[1]
+        height, width = image.shape[:2]
         if results.multi_hand_landmarks:
             for hand_landmarks in results.multi_hand_landmarks:
-                # === 1. CALCULAR DISTÂNCIA EM CM + LANDMARKS ===
-                distance_cm, lmList = self.get_distance(hand_landmarks, height, width)
-                Z_meters = -distance_cm / 100.0  # em metros, negativo = frente
-
-                # === 2. MONTAR MENSAGEM: 63 valores + Z em metros ===
-                message_parts = [f"{v:.3f}" for v in lmList]  # 63 valores
-                message_parts.append(f"{Z_meters:.3f}")  # último: Z em metros
-                message = ','.join(message_parts)
-
-                # === 3. ENVIAR PARA UNITY ===
-                self.sock.sendto(message.encode('utf-8'), self.serverAddrPlusPort)
-
-                # === 4. DEBUG: MOSTRAR Z ENVIADO ===
-                #print(f"ENVIANDO PARA UNITY: {len(message_parts)} valores | Z = {Z_meters:.3f} m")
-                print(message[:200] + "..." + message[-50:])  # opcional: ver começo e fim #TODO: talvez deva mudar formatacao
-                #print(lmList) #debug
-
-                # Desenhar na tela (opcional)
-                bbox = self.get_hand_bbox(hand_landmarks, width, height)
-                if bbox:
-                    x, y, w, h = bbox
-                    cv2.putText(image, f'{int(distance_cm)} cm', (x + 10, y - 10),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
 
                 self.mp_drawing.draw_landmarks(image, hand_landmarks, mp.solutions.hands.HAND_CONNECTIONS)
                 wrist = hand_landmarks.landmark[mp.solutions.hands.HandLandmark.WRIST]
@@ -149,6 +125,33 @@ class HandDetection:
 
                 # O resultado do ângulo é exibido
                 cv2.putText(image, f'Angulo: {angle:.2f}', (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2, cv2.LINE_AA)
+
+    def d2_to_unity(self, image, results):
+        height, width = image.shape[:2]
+        if results.multi_hand_landmarks:
+            for hand_landmarks in results.multi_hand_landmarks:
+                # === 1. CALCULAR DISTÂNCIA EM CM + LANDMARKS ===
+                distance_cm, lmList = self.get_distance(hand_landmarks, height, width)
+                Z_meters = -distance_cm / 100.0  # em metros, negativo = frente
+
+                # === 2. MONTAR MENSAGEM: 63 valores + Z em metros ===
+                message_parts = [f"{v:.3f}" for v in lmList]  # 63 valores
+                message_parts.append(f"{Z_meters:.3f}")  # último: Z em metros
+                message = ','.join(message_parts)
+
+                # === 3. ENVIAR PARA UNITY ===
+                self.sock.sendto(message.encode('utf-8'), self.serverAddrPlusPort)
+                #print(message[:200] + "..." + message[-50:])  # opcional: ver começo e fim
+
+    def d3_to_unity(self, image, results):
+        if results.multi_hand_world_landmarks:
+            for hand_landmarks in results.multi_hand_world_landmarks:
+                lm_3d_list = []
+                for lm in hand_landmarks.landmark:
+                    lm_3d_list.extend([lm.x, lm.y, lm.z])  # TODO: TESTAR SE É 3D, BOM E EFICIENTE EM TEMPO REAL
+                message1 = ','.join(f"{v:.3f}" for v in lm_3d_list)
+                self.sock.sendto(message1.encode('utf-8'), self.serverAddrPlusPort)
+                #print(message1[:200] + "..." + message1[-50:])  # opcional: ver começo e fim
 
     # Executa a detecção da mão através da câmera
     def run(self):
@@ -177,9 +180,14 @@ class HandDetection:
                 break
 
             #converte landmarks em uma lista para serem passadas ao unity dentro do drawlandmarks
-            #unityData = []
+
             # Desenha os vetores e ângulo sobre a imagem final
             self.draw_landmarks(image, results, arquivo_csv)
+
+            # mover logica errada em draw_landmarks para ca
+            #self.d2_to_unity(image, results)
+            self.d3_to_unity(image, results)
+
             cv2.imshow('Hand Detection', image)
             if cv2.waitKey(10) & 0xFF == 27:
                 contador += 1  # incrementa para o próximo arquivo
