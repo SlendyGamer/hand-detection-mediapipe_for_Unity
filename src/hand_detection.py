@@ -12,6 +12,7 @@ from vector_drawer import VectorDrawer
 import socket as sk
 #import json
 
+#coff = np.array([2.145035e-03, -0.631834, 66.585278])
 coff = np.array([1.405132e-03, -0.486281, 62.507305]) #calcule em calibrar.py
 class HandDetection:
     # Inicializa a classe HandDetection
@@ -141,17 +142,39 @@ class HandDetection:
 
                 # === 3. ENVIAR PARA UNITY ===
                 self.sock.sendto(message.encode('utf-8'), self.serverAddrPlusPort)
-                #print(message[:200] + "..." + message[-50:])  # opcional: ver começo e fim
+                print(message[:200] + "..." + message[-50:])  # opcional: ver começo e fim
 
     def d3_to_unity(self, image, results):
-        if results.multi_hand_world_landmarks:
-            for hand_landmarks in results.multi_hand_world_landmarks:
-                lm_3d_list = []
-                for lm in hand_landmarks.landmark:
-                    lm_3d_list.extend([lm.x, lm.y, lm.z])  # TODO: TESTAR SE É 3D, BOM E EFICIENTE EM TEMPO REAL
-                message1 = ','.join(f"{v:.3f}" for v in lm_3d_list)
-                self.sock.sendto(message1.encode('utf-8'), self.serverAddrPlusPort)
-                #print(message1[:200] + "..." + message1[-50:])  # opcional: ver começo e fim
+        if not results.multi_hand_landmarks or not results.multi_hand_world_landmarks:
+            return
+
+        height, width = image.shape[:2]
+
+        # Usamos os dois tipos de landmarks juntos
+        for img_hand, world_hand in zip(results.multi_hand_landmarks, results.multi_hand_world_landmarks):
+            wrist_img = img_hand.landmark[0]
+
+            X_offset = (wrist_img.x - 0.5) * 2.0  # centraliza (-1 a 1)
+            Y_offset = (wrist_img.y - 0.5) * -2.0  # inverte eixo Y
+
+            # Calcula distância usando o landmark da IMAGEM (correto)
+            distance_cm, _ = self.get_distance(img_hand, height, width)
+            Z_offset = -distance_cm / 100.0
+
+            # Monta os 63 valores usando o WORLD landmark
+            lm_3d_list = []
+            for lm in world_hand.landmark:
+                lm_3d_list.extend([lm.x, lm.y, lm.z])
+
+            # Adiciona o Z calibrado no final
+            message_parts = [f"{v:.3f}" for v in lm_3d_list]
+            message_parts.append(f"{X_offset:.3f}")
+            message_parts.append(f"{Y_offset:.3f}")
+            message_parts.append(f"{Z_offset:.3f}")
+
+            message = ','.join(message_parts)
+            self.sock.sendto(message.encode('utf-8'), self.serverAddrPlusPort)
+            print(message[:200] + "..." + message[-50:])   # opcional
 
     # Executa a detecção da mão através da câmera
     def run(self):
