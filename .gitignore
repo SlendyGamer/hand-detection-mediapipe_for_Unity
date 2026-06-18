@@ -1,0 +1,7 @@
+src/dist/
+src/build/
+*.exe
+*.pkg
+__pycache__/
+*.pyc
+.idea/
