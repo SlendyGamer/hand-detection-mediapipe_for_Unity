@@ -1,3 +1,5 @@
+# Arquivo que inicia todas as classes e aplicativos
+
 from tkinter import Tk
 from hand_detection_gui import HandSelectionGUI
 import sys
