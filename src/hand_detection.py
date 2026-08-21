@@ -5,6 +5,7 @@ from unittest import result
 import mediapipe as mp
 import cv2
 import os
+import time
 import numpy as np
 import math
 from datetime import datetime
@@ -16,6 +17,76 @@ from vector_drawer import VectorDrawer
 
 #coff = np.array([2.145035e-03, -0.631834, 66.585278])
 coff = np.array([1.405132e-03, -0.486281, 62.507305]) #calcule em calibrar.py
+
+def smoothing_factor(t_e, cutoff):
+    r = 2 * np.pi * cutoff * t_e
+    return r / (r + 1.0)
+
+
+def exponential_smoothing(a, x, x_prev):
+    return a * x + (1.0 - a) * x_prev
+
+
+class OneEuroFilter:
+    def __init__(
+        self,
+        t0,
+        x0,
+        dx0=0.0,
+        min_cutoff=1.0,
+        beta=0.007,
+        d_cutoff=1.0
+    ):
+        """Inicializa o filtro One Euro."""
+        self.min_cutoff = np.ones_like(x0, dtype=float) * min_cutoff
+        self.beta = np.ones_like(x0, dtype=float) * beta
+        self.d_cutoff = np.ones_like(x0, dtype=float) * d_cutoff
+
+        self.x_prev = np.array(x0, dtype=float)
+        self.dx_prev = np.ones_like(x0, dtype=float) * dx0
+        self.t_prev = t0
+
+    def __call__(self, t, x):
+        """Aplica o filtro ao sinal."""
+
+        x = np.asarray(x, dtype=float)
+
+        t_e = t - self.t_prev
+
+        # Evita divisão por zero
+        if t_e <= 0:
+            return self.x_prev
+
+        # Filtra a derivada
+        a_d = smoothing_factor(t_e, self.d_cutoff)
+
+        dx = (x - self.x_prev) / t_e
+
+        dx_hat = exponential_smoothing(
+            a_d,
+            dx,
+            self.dx_prev
+        )
+
+        # Cutoff adaptativo
+        cutoff = self.min_cutoff + self.beta * np.abs(dx_hat)
+
+        # Filtra o sinal
+        a = smoothing_factor(t_e, cutoff)
+
+        x_hat = exponential_smoothing(
+            a,
+            x,
+            self.x_prev
+        )
+
+        # Atualiza estado
+        self.x_prev = x_hat
+        self.dx_prev = dx_hat
+        self.t_prev = t
+
+        return x_hat
+
 class HandDetection:
     # Inicializa a classe HandDetection
     def __init__(self, pairs, camera_index=0, min_detection_confidence=0.8, min_tracking_confidence=0.8): #TODO: MUDAR CONFIDENCE PARA .8 PARA UNITY
@@ -31,6 +102,7 @@ class HandDetection:
 
         # Dicionário que guarda a lista de ângulos de cada par
         self.angles_data = {pair: [] for pair in self.pairs}
+        self.filtered_angles_data = {pair: [] for pair in self.pairs}
 
         self.exibit = {
             "THUMB_TIP": "Polegar",
@@ -53,6 +125,10 @@ class HandDetection:
         self.cap = cv2.VideoCapture(camera_index)
         self.calc_amplitude = CalculationAmplitudeClass()
         self.vector_drawer = VectorDrawer()
+
+        self.one_euro_world = None
+        self.one_euro_global = None
+        self.one_euro_angle = None
 
     def get_distance(self, hand_landmarks, height, width):
         """
@@ -188,16 +264,162 @@ class HandDetection:
             distance_cm, _ = self.get_distance(img_hand, height, width)
             Z_offset = -distance_cm / 100.0
 
+            # FILTRO DOS LANDMARKS 2D PARA O CALCULO DO ANGULO
+            img_landmarks_list = []
+
+            for lm in img_hand.landmark:
+                img_landmarks_list.extend([
+                    lm.x,
+                    lm.y,
+                    lm.z
+                ])
+
+            img_landmarks_array = np.array(
+                img_landmarks_list,
+                dtype=float
+            )
+
+            current_time_angle = time.perf_counter()
+
+            if self.one_euro_angle is None:
+                self.one_euro_angle = OneEuroFilter(
+                    t0=current_time_angle,
+                    x0=img_landmarks_array,
+                    min_cutoff=1.0,
+                    beta=0.007,
+                    d_cutoff=1.0
+                )
+
+                filtered_img_landmarks = img_landmarks_array
+
+            else:
+                filtered_img_landmarks = self.one_euro_angle(
+                    current_time_angle,
+                    img_landmarks_array
+                )
+
             # Monta os 63 valores usando o WORLD landmark
             lm_3d_list = []
+            # for lm in world_hand.landmark:
+            #   lm_3d_list.extend([lm.x, lm.y, lm.z])
+
             for lm in world_hand.landmark:
-                lm_3d_list.extend([lm.x, lm.y, lm.z])
+                lm_3d_list.extend([
+                    lm.x,
+                    lm.y,
+                    lm.z
+                ])
+
+            # Converte para numpy
+            lm_3d_array = np.array(
+                lm_3d_list,
+                dtype=float
+            )
+
+            # ============================================================
+            # 4. INICIALIZA O ONE EURO FILTER
+            # ============================================================
+
+            current_time = time.perf_counter()
+
+            if self.one_euro_world is None:
+
+                self.one_euro_world = OneEuroFilter(
+                    t0=current_time,
+                    x0=lm_3d_array,
+                    min_cutoff=1.0,
+                    beta=0.007,
+                    d_cutoff=1.0
+                )
+
+                filtered_landmarks = lm_3d_array
+
+            else:
+
+                # ========================================================
+                # 5. APLICA O ONE EURO FILTER
+                # ========================================================
+
+                filtered_landmarks = self.one_euro_world(
+                    current_time,
+                    lm_3d_array
+                )
+
+            global_position = np.array([
+                X_offset,
+                Y_offset,
+                Z_offset
+            ], dtype=float)
+
+            if self.one_euro_global is None:
+
+                self.one_euro_global = OneEuroFilter(
+                    t0=current_time,
+                    x0=global_position,
+
+                    # Mesma configuração
+                    min_cutoff=2.0,
+                    beta=0.1,
+                    d_cutoff=1.0
+                )
+
+                filtered_global = global_position
+
+            else:
+
+                filtered_global = self.one_euro_global(
+                    current_time,
+                    global_position
+                )
+
+            for pair in self.pairs:
+                finger1, finger2 = pair
+
+                index1 = getattr(
+                    mp.solutions.hands.HandLandmark,
+                    finger1
+                )
+
+                index2 = getattr(
+                    mp.solutions.hands.HandLandmark,
+                    finger2
+                )
+
+                wrist = np.array([
+                    filtered_img_landmarks[0],
+                    filtered_img_landmarks[1],
+                    filtered_img_landmarks[2]
+                ])
+
+                point1 = np.array([
+                    filtered_img_landmarks[index1 * 3],
+                    filtered_img_landmarks[index1 * 3 + 1],
+                    filtered_img_landmarks[index1 * 3 + 2]
+                ])
+
+                point2 = np.array([
+                    filtered_img_landmarks[index2 * 3],
+                    filtered_img_landmarks[index2 * 3 + 1],
+                    filtered_img_landmarks[index2 * 3 + 2]
+                ])
+
+                vector1 = point1 - wrist
+                vector2 = point2 - wrist
+
+                filtered_angle = self.calc_amplitude.calculate_amplitude(
+                    vector1,
+                    vector2
+                )
+
+                self.filtered_angles_data[pair].append(
+                    filtered_angle
+                )
 
             # Adiciona o Z calibrado no final
-            message_parts = [f"{v:.3f}" for v in lm_3d_list]
-            message_parts.append(f"{X_offset:.3f}")
-            message_parts.append(f"{Y_offset:.3f}")
-            message_parts.append(f"{Z_offset:.3f}")
+            message_parts = [f"{v:.3f}" for v in filtered_landmarks]
+            message_parts.append(f"{filtered_global[0]:.3f}")
+            message_parts.append(f"{filtered_global[1]:.3f}")
+            message_parts.append(f"{filtered_global[2]:.3f}")
 
             message = ','.join(message_parts)
             self.sock.sendto(message.encode('utf-8'), self.serverAddrPlusPort)
@@ -227,8 +449,13 @@ class HandDetection:
                 name2 = self.exibit.get(pair[1], pair[1])
                 sheet_name = f"{name1}-{name2}"[:31]
                 ws = wb.create_sheet(title=sheet_name)
-                ws['A1'] = f"Angulo entre {name1} e {name2}"
+                ws['A1'] = f"[NORMAL]: Angulo entre {name1} e {name2}"
+                ws['B1'] = ""
+                ws['C1'] = f"[FILTRADO]: Angulo entre {name1} e {name2}"
+
                 ws['A2'] = "Angulo (graus)"
+                ws['B2'] = ""
+                ws['C2'] = "Angulo filtrado (graus)"
             wb.save(self.excel_path)
 
         wb= load_workbook(self.excel_path)
@@ -246,6 +473,9 @@ class HandDetection:
             # Escreve todos os ângulos atuais
             for i, angle in enumerate(self.angles_data[pair], start=3):
                 ws.cell(row=i, column=1, value=round(angle, 2))
+
+            for i, angle in enumerate(self.filtered_angles_data[pair], start=3):
+                ws.cell(row=i, column=3, value=round(angle, 2))
 
         wb.save(self.excel_path)
         print(f"Excel atualizado: {self.excel_path}")
