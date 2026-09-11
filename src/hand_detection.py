@@ -9,6 +9,8 @@ import time
 import numpy as np
 import math
 from datetime import datetime
+from config_gui import get_active_user_data_dir
+from config_gui import get_active_user_coeffs, get_udp_port, get_camera_index
 
 from openpyxl import Workbook, load_workbook
 from calculation_amplitude import CalculationAmplitudeClass
@@ -89,10 +91,13 @@ class OneEuroFilter:
 
 class HandDetection:
     # Inicializa a classe HandDetection
-    def __init__(self, pairs, camera_index=0, min_detection_confidence=0.8, min_tracking_confidence=0.8): #TODO: MUDAR CONFIDENCE PARA .8 PARA UNITY
+    def __init__(self, pairs, camera_index=0, coeff_c=62.507305, min_detection_confidence=0.8, min_tracking_confidence=0.8): #TODO: MUDAR CONFIDENCE PARA .8 PARA UNITY
         self.frame_count = 0
         self.save_every = 30  # salva a cada 30 frames (~1 segundo se estiver a 30fps)
         self.excel_path = None  # caminho do arquivo será definido no primeiro save
+
+        A, B, C = get_active_user_coeffs()
+        self.coff = np.array([A, B, C], dtype=float)
 
         if pairs is not None:
             self.pairs = pairs
@@ -114,7 +119,7 @@ class HandDetection:
 
         #cofiguracao da comunicacao UDP para o unity
         self.sock = sk.socket(sk.AF_INET, sk.SOCK_DGRAM)
-        self.serverAddrPlusPort = ("127.0.0.1", 5052) #usar do windows para wsl
+        self.serverAddrPlusPort = ("127.0.0.1", get_udp_port()) #usar do windows para wsl
 
         self.mp_selfie_segmentation = mp.solutions.selfie_segmentation.SelfieSegmentation(model_selection=1)
 
@@ -122,7 +127,7 @@ class HandDetection:
         self.mp_drawing = mp.solutions.drawing_utils
         self.mp_hands = mp.solutions.hands.Hands(max_num_hands=1, min_detection_confidence=min_detection_confidence,
                                                  min_tracking_confidence=min_tracking_confidence, model_complexity=1)
-        self.cap = cv2.VideoCapture(camera_index)
+        self.cap = cv2.VideoCapture(get_camera_index())
         self.calc_amplitude = CalculationAmplitudeClass()
         self.vector_drawer = VectorDrawer()
 
@@ -149,7 +154,7 @@ class HandDetection:
         # Distância em pixels
         distance_pixels = int(math.hypot(x2 - x1, y2 - y1))
         # Aplicar regressão quadrática
-        A, B, C = coff
+        A, B, C = self.coff
         distance_cm = A * distance_pixels ** 2 + B * distance_pixels + C
 
         # Limitar a faixa física realista
@@ -245,7 +250,7 @@ class HandDetection:
 
                 # === 3. ENVIAR PARA UNITY ===
                 self.sock.sendto(message.encode('utf-8'), self.serverAddrPlusPort)
-                print(message[:200] + "..." + message[-50:])  # opcional: ver começo e fim
+                # print(message[:200] + "..." + message[-50:])  # opcional: ver começo e fim
 
     def d3_to_unity(self, image, results):
         if not results.multi_hand_landmarks or not results.multi_hand_world_landmarks:
@@ -423,7 +428,7 @@ class HandDetection:
 
             message = ','.join(message_parts)
             self.sock.sendto(message.encode('utf-8'), self.serverAddrPlusPort)
-            print(message[:200] + "..." + message[-50:])   # opcional
+            # print(message[:200] + "..." + message[-50:])   # opcional
 
     def save_to_excel(self):
         # Descobre o diretório onde está o .exe ou .py
@@ -433,7 +438,7 @@ class HandDetection:
             BASE_DIR = os.path.dirname(os.path.abspath(__file__))  # Se for script
 
         # Pasta de saída
-        PASTA_DATAS = os.path.join(BASE_DIR, "datas")
+        PASTA_DATAS = get_active_user_data_dir()
         os.makedirs(PASTA_DATAS, exist_ok=True)
 
         # Criar o caminho do arquivo com data
@@ -478,8 +483,7 @@ class HandDetection:
                 ws.cell(row=i, column=3, value=round(angle, 2))
 
         wb.save(self.excel_path)
-        print(f"Excel atualizado: {self.excel_path}")
-
+        # print(f"Excel atualizado: {self.excel_path}")
 
     # Executa a detecção da mão através da câmera
     def run(self):

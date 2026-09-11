@@ -1,7 +1,7 @@
 # GUI de selecao de amplitudes
 
 # hand_selection_gui.py
-
+from config_gui import UserConfigGUI, get_active_user_coeffs
 import sys
 import tkinter as tk
 from tkinter import ttk
@@ -9,7 +9,9 @@ from PIL import Image, ImageTk
 from hand_detection import HandDetection
 import os
 from pygrabber.dshow_graph import FilterGraph
+from config_gui import get_camera_index
 import cv2
+
 
 class HandSelectionGUI:
     def __init__(self, root):
@@ -24,8 +26,8 @@ class HandSelectionGUI:
         self.finger_pairs = []
         self.MAX_PAIRS = 10
 
-        #self.finger1 = None
-        #self.finger2 = None
+        # self.finger1 = None
+        # self.finger2 = None
 
         # Dicionário com posições manuais dos dedos e a localização (x,y) de cada em polegadas
         self.finger_positions = {
@@ -67,7 +69,8 @@ class HandSelectionGUI:
         # Criar radio buttons dinamicamente no canvas
         self.radio_buttons = {}
         for name, (x, y) in self.finger_positions.items():
-            btn = tk.Radiobutton(self.canvas, text="", value=name, indicatoron=False, width=2, height=1, border=0.5, bg="lightblue", command=lambda n=name: self.select_finger(n))
+            btn = tk.Radiobutton(self.canvas, text="", value=name, indicatoron=False, width=2, height=1, border=0.5,
+                                 bg="lightblue", command=lambda n=name: self.select_finger(n))
             self.canvas.create_window(x, y, window=btn)
             self.radio_buttons[name] = btn
 
@@ -109,14 +112,26 @@ class HandSelectionGUI:
             self.camera_dropdown["values"] = [
                 name for index, name in self.camera_devices
             ]
-            self.camera_dropdown.current(0)
+            self._restore_camera_from_config()
         else:
             self.camera_dropdown["values"] = ["Nenhuma câmera encontrada"]
             self.camera_dropdown.current(0)
 
+        # Sempre que o usuário mudar a seleção → atualiza o config global
+        self.camera_dropdown.bind("<<ComboboxSelected>>", self.on_camera_selected)
+
         # Botão de iniciar
         self.start_btn = tk.Button(self.root, text="Calcular Amplitude", command=self.start_detection, bg="lightblue")
         self.start_btn.pack(pady=10)
+
+        self.config_btn = tk.Button(
+            left_frame,  # ou self.root, conforme seu layout
+            text="⚙  configurações",
+            command=self.open_user_config,
+            bg="#e0e0e0",
+            font=("Arial", 10)
+        )
+        self.config_btn.pack(pady=5)
 
         # Direita - pares ja selecionados
         right_frame = tk.Frame(main_frame, bd=1, relief=tk.GROOVE)
@@ -135,6 +150,54 @@ class HandSelectionGUI:
             fg="gray"
         )
         self.empty_label.pack()
+
+    def _restore_camera_from_config(self):
+        """Seleciona no dropdown a câmera salva em data/globalconfig/config.json."""
+        from config_gui import get_camera_index
+
+        saved_index = get_camera_index()
+        for i, (idx, name) in enumerate(self.camera_devices):
+            if idx == saved_index:
+                self.camera_dropdown.current(i)
+                self.camera_status_label.config(
+                    text=f"Câmera ativa: {name} (índice {idx})",
+                    fg="green"
+                )
+                return
+
+        # Se o índice salvo não existe mais, usa a primeira e atualiza o config
+        self.camera_dropdown.current(0)
+        self.on_camera_selected()
+
+    def on_camera_selected(self, event=None):
+        """Grava o índice da câmera escolhida no config global."""
+        from config_gui import load_global_config, save_global_config
+
+        selected_name = self.camera_var.get()
+        if not self.camera_devices:
+            return
+
+        for idx, name in self.camera_devices:
+            if name == selected_name:
+                cfg = load_global_config()
+                cfg["camera_index"] = int(idx)
+                save_global_config(cfg)
+
+                self.camera_status_label.config(
+                    text=f"Câmera ativa: {name} (índice {idx})",
+                    fg="green"
+                )
+                print(f"Config global atualizado: camera_index = {idx}")
+                return
+
+        self.camera_status_label.config(
+            text="Câmera inválida",
+            fg="red"
+        )
+
+    def open_user_config(self):
+        UserConfigGUI(self.root)
+
     def select_finger(self, finger_name):
         # Se já atingiu o limite máximo, avisa e sai
         if len(self.finger_pairs) >= self.MAX_PAIRS:
@@ -163,7 +226,9 @@ class HandSelectionGUI:
             self.status_label.config(text="Este par ja foi selecionado!", fg="orange")
         else:
             self.finger_pairs.append(pair)
-            self.status_label.config(text=f"Par adicionado: {self.exibit_names[self.finger_selection1]} ↔ {self.exibit_names[self.finger_selection2]}", fg="green")
+            self.status_label.config(
+                text=f"Par adicionado: {self.exibit_names[self.finger_selection1]} ↔ {self.exibit_names[self.finger_selection2]}",
+                fg="green")
             self._refresh_pairs_list()
 
         # Sempre reseta a seleção temporária após tentar adicionar
@@ -176,7 +241,8 @@ class HandSelectionGUI:
             self.status_label.config(text="Limite de 10 pares atingido!", fg="red")
         else:
             # Pede selecao do proximo par
-            self.root.after(1200, lambda: self.status_label.config(text="Selecione o primeiro dedo do próximo par", fg="black"))
+            self.root.after(1200, lambda: self.status_label.config(text="Selecione o primeiro dedo do próximo par",
+                                                                   fg="black"))
 
     # Atualiza a cor de fundo dos rádios conforme a seleção temporária
     def _update_radio_colors(self):
@@ -244,6 +310,7 @@ class HandSelectionGUI:
 
         # Converte frozensetr para tupla ordenada
         pairs_list = [tuple(sorted(p)) for p in self.finger_pairs]
+        user_c = get_active_user_coeffs()
 
         if not self.camera_devices:
             self.camera_status_label.config(
@@ -259,7 +326,8 @@ class HandSelectionGUI:
         try:
             hand_detection = HandDetection(
                 pairs=pairs_list,
-                camera_index=camera_index
+                camera_index=camera_index,
+                coeff_c=user_c
             )
 
             # Verifica se a câmera realmente conseguiu abrir
@@ -280,6 +348,7 @@ class HandSelectionGUI:
                 fg="red"
             )
 
+
 def resource_path(relative_path):
     try:
         base_path = sys._MEIPASS  # criado pelo PyInstaller no onefile
@@ -287,6 +356,7 @@ def resource_path(relative_path):
         base_path = os.path.abspath(".")
 
     return os.path.join(base_path, relative_path)
+
 
 # Apenas para debug
 if __name__ == "__main__":
